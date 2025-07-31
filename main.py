@@ -56,8 +56,8 @@ def get_recommendations(title, selected_genres, top_n=5):
     return df.iloc[filtered_indices][selected_columns]
 
 # UI Streamlit
-st.set_page_config("Rekomendasi Film Netflix Berdasarkan beberapa kategori", page_icon="🎬")
-st.title("🎬 Rekomendasi Film Netflix")
+st.set_page_config("Rekomendasi Film Netflix", page_icon="🎬")
+st.title("🎬 Rekomendasi Film Netflix Berdasarkan beberapa kategori")
 
 film_input = st.selectbox("Pilih judul film yang kamu sukai:", movie_titles)
 selected_genres = st.multiselect("Pilih satu atau lebih genre:", genre_list)
