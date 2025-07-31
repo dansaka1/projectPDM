@@ -3,7 +3,7 @@ import pickle
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ====================== LOAD MODEL DAN DATA ============================
+# Load data dan model
 with open('vectorizer.pkl', 'rb') as f:
     vectorizer = pickle.load(f)
 
@@ -15,18 +15,25 @@ with open('movie_titles.pkl', 'rb') as f:
 
 df = pd.read_csv('film_dataset_cleaned.csv')
 
-# ======================== PERSIAPAN FILTER =============================
-# Genre
+# Pastikan kolom durasi numerik dan bersih
+df['duration_minutes'] = df['duration'].str.extract('(\d+)').astype(float)
+
+# Genre unik
 genre_list = sorted({genre.strip() for genres in df['listed_in'] for genre in genres.split(',')})
-
-# Tahun Rilis
 year_list = sorted(df['release_year'].dropna().unique().astype(int), reverse=True)
+age_rating_list = sorted(df['age_rating'].dropna().astype(str).unique()) if 'age_rating' in df.columns else ['13', '17', '18', '21']
 
-# Rating Usia
-rating_list = sorted(df['rating'].dropna().unique())
+# Kategori durasi custom
+durasi_opsi = {
+    "Kurang dari 1 jam": lambda x: x < 60,
+    "Sekitar 1 jam": lambda x: 55 <= x <= 65,
+    "Lebih dari 1 jam": lambda x: 60 < x <= 90,
+    "Sekitar 2 jam": lambda x: 90 <= x <= 130,
+    "Lebih dari 2 jam": lambda x: x > 130,
+}
 
-# ===================== FUNGSI REKOMENDASI ==============================
-def get_recommendations(title, selected_genres, selected_years, selected_ratings, top_n=5):
+# Fungsi rekomendasi
+def get_recommendations(title, selected_genres, selected_years, selected_ages, selected_durations, top_n=5):
     if title not in movie_titles:
         return pd.DataFrame()
 
@@ -34,83 +41,72 @@ def get_recommendations(title, selected_genres, selected_years, selected_ratings
     cosine_sim = cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
     similar_indices = cosine_sim.argsort()[::-1]
 
-    # Filter berdasarkan kategori yang dipilih
     filtered_indices = []
     for i in similar_indices:
+        if i == idx:
+            continue
         row = df.iloc[i]
 
-        # Genre check
+        # Genre filter
         film_genres = row['listed_in'].split(', ')
         genre_match = any(genre in film_genres for genre in selected_genres) if selected_genres else True
 
-        # Tahun check
+        # Tahun rilis
         year_match = row['release_year'] in selected_years if selected_years else True
 
-        # Rating check
-        rating_match = row['rating'] in selected_ratings if selected_ratings else True
+        # Rating usia
+        age_match = str(row.get('age_rating', '')) in selected_ages if selected_ages else True
 
-        if genre_match and year_match and rating_match:
+        # Durasi
+        durasi_value = row.get('duration_minutes', 0)
+        durasi_match = any(condition(durasi_value) for condition in selected_durations.values()) if selected_durations else True
+
+        if genre_match and year_match and age_match and durasi_match:
             filtered_indices.append(i)
 
-        if len(filtered_indices) >= top_n + 1:  # +1 karena input film sendiri masuk juga
+        if len(filtered_indices) >= top_n:
             break
 
-    # Hapus film input dari hasil
-    filtered_indices = [i for i in filtered_indices if i != idx]
+    return df.iloc[filtered_indices][['title', 'listed_in', 'release_year', 'age_rating', 'duration', 'description', 'image_url']] if 'image_url' in df.columns else \
+           df.iloc[filtered_indices][['title', 'listed_in', 'release_year', 'age_rating', 'duration', 'description']]
 
-    return df.iloc[filtered_indices][['title', 'listed_in', 'release_year', 'rating', 'description']]
+# ======================= UI ========================
 
-# ======================= UI STREAMLIT ===============================
-st.set_page_config(page_title="Rekomendasi Film Netflix", page_icon="🎬")
+st.set_page_config(page_title="Rekomendasi Film", page_icon="🎬")
 
-st.markdown("<h1 style='text-align: center; color: #e50914;'>🎬 Rekomendasi Film Netflix</h1>", unsafe_allow_html=True)
-st.markdown("<h4 style='text-align: center; color: #555;'>Berdasarkan Beberapa Kategori Menggunakan Algoritma Content-Based Filtering</h4>", unsafe_allow_html=True)
-st.markdown("---")
-
-with st.expander("📌 Tentang Proyek Ini"):
+with st.expander("Tentang Aplikasi Ini"):
     st.write("""
-    Aplikasi ini merupakan implementasi dari algoritma **Content-Based Filtering** untuk memberikan rekomendasi film Netflix. 
-    Rekomendasi didasarkan pada kesamaan deskripsi film dan disaring berdasarkan:
-    - **Genre**
-    - **Tahun Rilis**
-    - **Usia Penonton (Rating)**  
+    Sistem ini merekomendasikan film berdasarkan konten deskripsi dengan Content-Based Filtering.
+    Pengguna dapat memfilter hasil berdasarkan beberapa kategori seperti genre, tahun rilis, usia penonton, dan durasi film.
     """)
-    st.info("Algoritma yang digunakan: TF-IDF + Cosine Similarity")
 
-# ===================== INPUT PENGGUNA ============================
-st.subheader("1. Pilih Film Favoritmu")
-film_input = st.selectbox("Judul Film:", movie_titles)
+st.selectbox("Pilih Film Favoritmu", movie_titles, key="film_input", index=0)
+film_input = st.session_state.film_input
 
-st.subheader("2. Filter Kategori:")
+st.markdown("### Filter Kategori:")
 col1, col2 = st.columns(2)
 
 with col1:
-    selected_genres = st.multiselect("🎭 Genre:", genre_list)
+    selected_genres = st.multiselect("Genre", genre_list)
+    selected_years = st.multiselect("Tahun Rilis", year_list)
 
 with col2:
-    selected_years = st.multiselect("📅 Tahun Rilis:", year_list)
+    selected_ages = st.multiselect("Usia Penonton", age_rating_list)
+    durasi_label = st.multiselect("Durasi Film", list(durasi_opsi.keys()))
+    selected_durations = {label: durasi_opsi[label] for label in durasi_label}
 
-selected_ratings = st.multiselect("🔞 Rating Usia Penonton:", rating_list)
-
-# ===================== TOMBOL DAN HASIL ==========================
-if st.button("🎯 Tampilkan Rekomendasi"):
-    results = get_recommendations(film_input, selected_genres, selected_years, selected_ratings)
+if st.button("Tampilkan Rekomendasi"):
+    results = get_recommendations(film_input, selected_genres, selected_years, selected_ages, selected_durations)
     if results.empty:
-        st.warning("😕 Tidak ditemukan film serupa yang cocok dengan kategori yang dipilih.")
+        st.error("Tidak ada film ditemukan dengan kriteria tersebut.")
     else:
-        st.markdown("## 🎥 Rekomendasi Film:")
         for _, row in results.iterrows():
-            st.markdown(f"### 🎞️ {row['title']}")
-            st.write(f"**Genre:** {row['listed_in']}")
-            st.write(f"**Tahun Rilis:** {int(row['release_year'])}")
-            st.write(f"**Rating Usia:** {row['rating']}")
-            st.write(f"**Deskripsi:** {row['description']}")
+            st.subheader(f"🎬 {row['title']}")
+            if 'image_url' in row and pd.notna(row['image_url']):
+                st.image(row['image_url'], use_column_width=True)
+            st.markdown(f"**Genre:** {row['listed_in']}")
+            st.markdown(f"**Tahun Rilis:** {int(row['release_year'])}")
+            st.markdown(f"**Usia Penonton:** {row.get('age_rating', 'Tidak tersedia')}")
+            st.markdown(f"**Durasi:** {row.get('duration', 'Tidak diketahui')}")
+            st.markdown(f"**Deskripsi:** {row['description']}")
             st.markdown("---")
-
-# ===================== FOOTER ==========================
-st.markdown("""
-    <hr>
-    <div style='text-align: center; font-size: small; color: gray;'>
-        © 2025 | Proyek Data Mining - Sistem Rekomendasi Film Netflix
-    </div>
-""", unsafe_allow_html=True)
